@@ -6,7 +6,7 @@ REMOTE_IMAGE="ghcr.io/vincetheprogrammer/sbox-win-docker:main"
 REPO_URL="https://github.com/vinceTheProgrammer/sbox-win-docker"
 INSTALL_DOCS_URL="https://docs.docker.com/engine/install/"
 
-# Extract repo path from REPO_URL for validation (e.g., "CSEliot/sbox-win-docker")
+# Extract repo path from REPO_URL for validation (e.g., "MyGithubAccount/sbox-win-docker")
 EXPECTED_REPO_PATH="${REPO_URL#*github.com/}"
 EXPECTED_REPO_PATH="${EXPECTED_REPO_PATH%/}"
 
