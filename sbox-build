@@ -11,6 +11,7 @@ EXPECTED_REPO_PATH="${REPO_URL#*github.com/}"
 EXPECTED_REPO_PATH="${EXPECTED_REPO_PATH%/}"
 
 DEFAULT_SRC_DIR="$HOME/.local/share/sbox-win-docker"
+COMPOSE_FILE=""
 
 NO_PROMPT=0
 FORCE_PULL=0
@@ -31,7 +32,7 @@ Wrapper Options:
   --src-dir <dir>       Override local repo directory (default: $DEFAULT_SRC_DIR)
   --repo-root-name <n>  Override detected repo root name (bypasses 'sbox-public' check)
   --no-prompt           Never prompt; fail if user interaction would be required
-  --shell               Drop into an interactive bash shell inside the container           
+  --shell               Drop into an interactive bash shell inside the container
   -h, --help            Show this help message
 
 Build Options:
@@ -389,18 +390,72 @@ fi
 
 echo "Starting s&box build in repo: $REPO_ROOT (name override: ${REPO_ROOT_NAME_OVERRIDE:-none})"
 
-COMPOSE_FILE="/mnt/shared/SBox/1-sbox-win-docker/docker-compose.yml"
+# Determine Compose file location and availability
 USE_COMPOSE=0
-
-# Check if docker compose plugin is available
 if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-    USE_COMPOSE=0
+    USE_COMPOSE=1
 fi
 
-echo "Using: $( [[ $USE_COMPOSE -eq 1 ]] && echo 'Docker Compose' || echo 'Docker Run (Fallback)') mode"
+# 1. Check DEFAULT_SRC_DIR first
+if [[ -f "$DEFAULT_SRC_DIR/docker-compose.yml" ]]; then
+    COMPOSE_FILE="$DEFAULT_SRC_DIR/docker-compose.yml"
+elif [[ -f "./docker-compose.yml" ]]; then
+    # 2. Check local directory where script was executed
+    COMPOSE_FILE="./docker-compose.yml"
+else
+    # 3. If Compose is installed but no file exists, generate one in DEFAULT_SRC_DIR
+    if [[ "$USE_COMPOSE" -eq 1 ]]; then
+        mkdir -p "$DEFAULT_SRC_DIR"
+        cat > "$DEFAULT_SRC_DIR/docker-compose.yml" << 'COMPOSE_EOF'
+# s&box Wine build system
+services:
+  sbox-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sbox-win-docker:latest
+    container_name: sbox-build
+    environment:
+      - DISPLAY=:0
+      - WINEDEBUG=-all
+      - SBOX_CONFIG=${SBOX_CONFIG:-Developer}
+      - HOST_UID=${HOST_UID:-1000}
+      - HOST_GID=${HOST_GID:-1000}
+      - NO_PROMPT=${NO_PROMPT:-0}
+    volumes:
+      # Persist Wine prefix across runs (named volume)
+      - wine-prefix:/root/.wine64
+      # NuGet cache — speeds up dotnet restore significantly
+      # Placeholder for user-specific path, replaced by script if needed
+      - ${NUGET_CACHE:-__NUGET_PATH__}:/root/.wine64/drive_c/users/root/.nuget:z
+    devices:
+      - /dev/dri:/dev/dri
+    working_dir: /root/sbox
+    entrypoint: ["python3", "/usr/local/bin/build.py"]
+    security_opt:
+      - seccomp=unconfined
+
+volumes:
+  wine-prefix:
+COMPOSE_EOF
+        # Replace placeholder with actual home directory path
+        sed -i "s|__NUGET_PATH__|$HOME/.cache/sbox-nuget|g" "$DEFAULT_SRC_DIR/docker-compose.yml"
+        COMPOSE_FILE="$DEFAULT_SRC_DIR/docker-compose.yml"
+        echo "Generated default docker-compose.yml in $DEFAULT_SRC_DIR"
+    else
+        # No Compose, no file needed
+        COMPOSE_FILE=""
+    fi
+fi
+
+if [[ -n "$COMPOSE_FILE" ]]; then
+    echo "Using: Docker Compose mode (file: $COMPOSE_FILE)"
+else
+    echo "Using: Docker Run (Fallback) mode"
+fi
 
 if [[ "$DROP_SHELL" -eq 1 ]]; then
-  if [[ "$USE_COMPOSE" -eq 1 ]]; then
+  if [[ -n "$COMPOSE_FILE" ]]; then
     docker compose -f "$COMPOSE_FILE" run --rm \
       -v "$PWD:/root/sbox:z" \
       -e HOST_UID="$(id -u)" \
@@ -420,7 +475,7 @@ if [[ "$DROP_SHELL" -eq 1 ]]; then
       "$LOCAL_IMAGE"
   fi
 else
-  if [[ "$USE_COMPOSE" -eq 1 ]]; then
+  if [[ -n "$COMPOSE_FILE" ]]; then
     docker compose -f "$COMPOSE_FILE" run --rm \
       -v "$PWD:/root/sbox:z" \
       -e HOST_UID="$(id -u)" \
